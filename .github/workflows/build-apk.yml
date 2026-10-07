@@ -22,11 +22,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # =========================================================
       # 1. CHECKOUT
       # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v7
+
 
       # =========================================================
       # 2. JAVA 17
@@ -37,23 +39,48 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
+
       # =========================================================
-      # 3. ANDROID SDK
+      # 3. ANDROID SDK COMMAND LINE TOOLS
+      #
+      # IMPORTANT:
+      # Do NOT put multiple packages on separate YAML lines.
+      # We intentionally install only platform-tools here.
+      # Additional SDK packages are installed below with sdkmanager.
       # =========================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: |
-            platform-tools
-            platforms;android-${{ env.ANDROID_API }}
-            build-tools;${{ env.BUILD_TOOLS }}
+          cmdline-tools-version: "15859902"
+          packages: "platform-tools"
           accept-android-sdk-licenses: "true"
           log-accepted-android-sdk-licenses: "false"
 
+
       # =========================================================
-      # 4. VERIFY TOOLCHAIN
+      # 4. INSTALL REQUIRED ANDROID SDK PACKAGES
       # =========================================================
-      - name: Verify Java and Android tools
+      - name: Install Android SDK platform and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Installing Android SDK packages..."
+
+          command -v sdkmanager
+
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
+          echo
+          echo "Android SDK packages installed successfully."
+
+
+      # =========================================================
+      # 5. VERIFY ANDROID TOOLCHAIN
+      # =========================================================
+      - name: Verify Android toolchain
         shell: bash
         run: |
           set -euo pipefail
@@ -62,12 +89,13 @@ jobs:
           java --version
 
           echo
-          echo "===== GRADLE / SDK TOOLS ====="
-
-          command -v sdkmanager
-          command -v adb
-
+          echo "===== SDKMANAGER ====="
+          which sdkmanager
           sdkmanager --version
+
+          echo
+          echo "===== ADB ====="
+          which adb
           adb --version
 
           echo
@@ -75,8 +103,15 @@ jobs:
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
           echo "ANDROID_HOME=${ANDROID_HOME:-}"
 
+          echo
+          echo "===== REQUIRED SDK PACKAGES ====="
+          sdkmanager --list_installed | grep -E \
+            "platform-tools|platforms;android-36|build-tools;36.0.0" \
+            || true
+
+
       # =========================================================
-      # 5. VERIFY ZIP
+      # 6. VERIFY ZIP EXISTS
       # =========================================================
       - name: Verify Stitch ZIP
         shell: bash
@@ -88,10 +123,7 @@ jobs:
 
           if [ ! -f "${ZIP_FILE}" ]; then
             echo
-            echo "ERROR: ${ZIP_FILE} was not found."
-            echo
-            echo "Expected:"
-            echo "  ${ZIP_FILE}"
+            echo "ERROR: ${ZIP_FILE} was not found in repository root."
             echo
             echo "Files actually present:"
             find . -maxdepth 3 -type f -print | sort
@@ -106,8 +138,9 @@ jobs:
           echo "ZIP CONTENT:"
           unzip -l "${ZIP_FILE}"
 
+
       # =========================================================
-      # 6. EXTRACT ZIP
+      # 7. EXTRACT STITCH ZIP
       # =========================================================
       - name: Extract Stitch project
         shell: bash
@@ -119,24 +152,28 @@ jobs:
 
           unzip -q "${ZIP_FILE}" -d _stitch
 
-          echo "Extracted directories:"
-          find _stitch -mindepth 1 -maxdepth 3 -type d | sort
+          echo
+          echo "Extracted files:"
+          find _stitch -maxdepth 4 -type f | sort
 
-          # Detect the folder containing the actual Stitch screen folders.
-          STITCH_ROOT="$(
+          FIRST_HTML="$(
             find _stitch \
               -type f \
               -name 'code.html' \
               -print \
-            | head -n 1 \
-            | xargs -r dirname \
-            | xargs -r dirname
+            | head -n 1
           )"
 
-          if [ -z "${STITCH_ROOT}" ]; then
-            echo "ERROR: No code.html was found inside ZIP."
+          if [ -z "${FIRST_HTML}" ]; then
+            echo
+            echo "ERROR: No code.html file was found inside the ZIP."
             exit 1
           fi
+
+          STITCH_ROOT="$(
+            dirname \
+              "$(dirname "${FIRST_HTML}")"
+          )"
 
           echo
           echo "Detected Stitch root:"
@@ -144,8 +181,9 @@ jobs:
 
           echo "STITCH_ROOT=${STITCH_ROOT}" >> "${GITHUB_ENV}"
 
+
       # =========================================================
-      # 7. VERIFY YOUR ACTUAL SCREENS
+      # 8. VERIFY YOUR STITCH SCREENS
       # =========================================================
       - name: Verify Stitch screens
         shell: bash
@@ -172,19 +210,25 @@ jobs:
             "kerala_gothic_psychological_horror/DESIGN.md"
           )
 
-          for file in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "${STITCH_ROOT}/${file}" ]; then
-              echo "ERROR: Missing:"
-              echo "  ${STITCH_ROOT}/${file}"
+          echo "Checking required Stitch files..."
+
+          for FILE in "${REQUIRED_FILES[@]}"; do
+
+            if [ ! -f "${STITCH_ROOT}/${FILE}" ]; then
+              echo
+              echo "ERROR: Required file missing:"
+              echo "${STITCH_ROOT}/${FILE}"
               exit 1
             fi
+
           done
 
           echo
           echo "All required Stitch files found."
 
+
       # =========================================================
-      # 8. CREATE ANDROID PROJECT
+      # 9. CREATE ANDROID PROJECT
       # =========================================================
       - name: Create Android project
         shell: bash
@@ -198,17 +242,21 @@ jobs:
             android-build/app/src/main/java/com/kottaram/shadows \
             android-build/app/src/main/res/values
 
-          # Copy the COMPLETE Stitch project into Android assets.
-          cp -R "${STITCH_ROOT}/." \
+          # Copy the complete Stitch project
+          cp -R \
+            "${STITCH_ROOT}/." \
             android-build/app/src/main/assets/
 
           echo
           echo "Android assets created:"
           find android-build/app/src/main/assets \
-            -maxdepth 3 -type f | sort
+            -maxdepth 4 \
+            -type f \
+            | sort
+
 
       # =========================================================
-      # 9. settings.gradle.kts
+      # 10. CREATE settings.gradle.kts
       # =========================================================
       - name: Create settings.gradle.kts
         shell: bash
@@ -238,8 +286,9 @@ jobs:
           include(":app")
           EOF
 
+
       # =========================================================
-      # 10. ROOT build.gradle.kts
+      # 11. CREATE ROOT build.gradle.kts
       # =========================================================
       - name: Create root build.gradle.kts
         shell: bash
@@ -250,8 +299,9 @@ jobs:
           }
           EOF
 
+
       # =========================================================
-      # 11. gradle.properties
+      # 12. CREATE gradle.properties
       # =========================================================
       - name: Create gradle.properties
         shell: bash
@@ -262,8 +312,9 @@ jobs:
           android.nonTransitiveRClass=true
           EOF
 
+
       # =========================================================
-      # 12. APP build.gradle.kts
+      # 13. CREATE APP build.gradle.kts
       # =========================================================
       - name: Create app build.gradle.kts
         shell: bash
@@ -275,6 +326,7 @@ jobs:
 
           android {
               namespace = "com.kottaram.shadows"
+
               compileSdk = 36
 
               defaultConfig {
@@ -285,9 +337,6 @@ jobs:
 
                   versionCode = 1
                   versionName = "1.0"
-
-                  testInstrumentationRunner =
-                      "androidx.test.runner.AndroidJUnitRunner"
               }
 
               compileOptions {
@@ -297,20 +346,21 @@ jobs:
 
               buildTypes {
                   debug {
-                      isMinifyEnabled = false
                       isDebuggable = true
+                      isMinifyEnabled = false
                   }
 
                   release {
-                      isMinifyEnabled = false
                       isDebuggable = false
+                      isMinifyEnabled = false
                   }
               }
           }
           EOF
 
+
       # =========================================================
-      # 13. ANDROID MANIFEST
+      # 14. CREATE AndroidManifest.xml
       # =========================================================
       - name: Create AndroidManifest.xml
         shell: bash
@@ -345,8 +395,9 @@ jobs:
           </manifest>
           EOF
 
+
       # =========================================================
-      # 14. APP THEME
+      # 15. CREATE APP THEME
       # =========================================================
       - name: Create styles.xml
         shell: bash
@@ -362,17 +413,27 @@ jobs:
 
                   <item name="android:fontFamily">sans</item>
                   <item name="android:windowLightStatusBar">false</item>
-                  <item name="android:statusBarColor">#0F1418</item>
-                  <item name="android:navigationBarColor">#0A0F13</item>
-                  <item name="android:windowBackground">#0F1418</item>
+
+                  <item name="android:statusBarColor">
+                      #0F1418
+                  </item>
+
+                  <item name="android:navigationBarColor">
+                      #0A0F13
+                  </item>
+
+                  <item name="android:windowBackground">
+                      #0F1418
+                  </item>
 
               </style>
 
           </resources>
           EOF
 
+
       # =========================================================
-      # 15. MAIN ACTIVITY
+      # 16. CREATE MainActivity.java
       # =========================================================
       - name: Create MainActivity.java
         shell: bash
@@ -393,6 +454,10 @@ jobs:
 
               private WebView webView;
 
+              private static final String HOME_URL =
+                  "file:///android_asset/" +
+                  "jeevalokam_kerala_living_world/code.html";
+
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
@@ -400,63 +465,60 @@ jobs:
                   webView = new WebView(this);
 
                   webView.setBackgroundColor(
-                          Color.rgb(15, 20, 24)
+                      Color.rgb(15, 20, 24)
                   );
 
                   webView.setOverScrollMode(
-                          View.OVER_SCROLL_NEVER
+                      View.OVER_SCROLL_NEVER
                   );
 
-                  WebSettings settings = webView.getSettings();
+                  WebSettings settings =
+                      webView.getSettings();
 
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
                   settings.setDatabaseEnabled(true);
-
                   settings.setAllowFileAccess(true);
                   settings.setAllowContentAccess(true);
 
-                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setMediaPlaybackRequiresUserGesture(
+                      false
+                  );
 
                   webView.setWebChromeClient(
-                          new WebChromeClient()
+                      new WebChromeClient()
                   );
 
                   webView.setWebViewClient(
-                          new WebViewClient()
+                      new WebViewClient()
                   );
 
                   setContentView(webView);
 
-                  /*
-                   * Your ZIP contains:
-                   *
-                   * jeevalokam_kerala_living_world/code.html
-                   *
-                   * This is used as the initial screen.
-                   */
-                  webView.loadUrl(
-                      "file:///android_asset/" +
-                      "jeevalokam_kerala_living_world/code.html"
-                  );
+                  webView.loadUrl(HOME_URL);
               }
 
               @Override
               public void onBackPressed() {
 
-                  if (webView != null && webView.canGoBack()) {
+                  if (webView != null &&
+                      webView.canGoBack()) {
+
                       webView.goBack();
+
                   } else {
+
                       super.onBackPressed();
                   }
               }
           }
           EOF
 
+
       # =========================================================
-      # 16. FINAL PROJECT CHECK
+      # 17. VALIDATE GENERATED PROJECT
       # =========================================================
-      - name: Validate generated Android project
+      - name: Validate Android project
         shell: bash
         run: |
           set -euo pipefail
@@ -472,35 +534,43 @@ jobs:
             "android-build/app/src/main/assets/jeevalokam_kerala_living_world/code.html"
           )
 
-          for file in "${REQUIRED[@]}"; do
-            if [ ! -f "$file" ]; then
-              echo "ERROR: Missing generated file:"
-              echo "$file"
+          for FILE in "${REQUIRED[@]}"; do
+
+            if [ ! -f "${FILE}" ]; then
+              echo
+              echo "ERROR: Generated Android file missing:"
+              echo "${FILE}"
               exit 1
             fi
+
           done
 
-          echo "Generated Android project validation: PASS"
+          echo
+          echo "Android project validation: PASS"
+
 
       # =========================================================
-      # 17. SETUP GRADLE 9.3.1
+      # 18. SETUP GRADLE 9.3.1
       # =========================================================
       - name: Setup Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "9.3.1"
 
+
       # =========================================================
-      # 18. VERIFY GRADLE
+      # 19. VERIFY GRADLE
       # =========================================================
       - name: Verify Gradle
         shell: bash
         run: |
           set -euo pipefail
+
           gradle --version
 
+
       # =========================================================
-      # 19. BUILD DEBUG APK
+      # 20. BUILD DEBUG APK
       # =========================================================
       - name: Build Debug APK
         working-directory: android-build
@@ -508,36 +578,44 @@ jobs:
         run: |
           set -euo pipefail
 
-          gradle \
-            assembleDebug \
+          gradle assembleDebug \
             --no-daemon \
             --stacktrace \
             --console=plain
 
+
       # =========================================================
-      # 20. CHECK APK
+      # 21. VERIFY APK
       # =========================================================
       - name: Verify APK
         shell: bash
         run: |
           set -euo pipefail
 
-          APK_DIR="android-build/app/build/outputs/apk/debug"
+          APK_DIR="app/build/outputs/apk/debug"
+
+          echo "Looking for APK..."
 
           if ! compgen -G "${APK_DIR}/*.apk" > /dev/null; then
-            echo "ERROR: APK was not generated."
-            find android-build/app/build -type f | sort
-            exit 1
+
+              echo
+              echo "ERROR: APK was not generated."
+              echo
+              echo "Build output:"
+              find app/build -type f | sort
+
+              exit 1
           fi
 
           echo
-          echo "APK GENERATED:"
+          echo "APK GENERATED SUCCESSFULLY:"
           ls -lh "${APK_DIR}"/*.apk
 
+
       # =========================================================
-      # 21. UPLOAD APK
+      # 22. UPLOAD APK
       # =========================================================
-      - name: Upload APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: kottaram-debug-apk
