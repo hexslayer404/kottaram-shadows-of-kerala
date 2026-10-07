@@ -9,70 +9,183 @@ on:
 permissions:
   contents: read
 
+env:
+  JAVA_VERSION: "17"
+  GRADLE_VERSION: "9.3.1"
+  ANDROID_API: "36"
+  BUILD_TOOLS: "36.0.0"
+  ZIP_FILE: "stitch_kottaram_shadows_of_kerala.zip"
+
 jobs:
   build:
-    name: Build Android APK from Stitch ZIP
+    name: Build Kottaram Android APK
     runs-on: ubuntu-latest
 
     steps:
-      # ---------------------------------------------------------
-      # 1. Checkout repository
-      # ---------------------------------------------------------
+      # =========================================================
+      # 1. CHECKOUT
+      # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # ---------------------------------------------------------
-      # 2. Java 17
-      # ---------------------------------------------------------
-      - name: Set up JDK 17
+      # =========================================================
+      # 2. JAVA 17
+      # =========================================================
+      - name: Setup JDK 17
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
 
-      # ---------------------------------------------------------
-      # 3. Find and extract YOUR exact ZIP
-      # ---------------------------------------------------------
+      # =========================================================
+      # 3. ANDROID SDK
+      # =========================================================
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: |
+            platform-tools
+            platforms;android-${{ env.ANDROID_API }}
+            build-tools;${{ env.BUILD_TOOLS }}
+          accept-android-sdk-licenses: "true"
+          log-accepted-android-sdk-licenses: "false"
+
+      # =========================================================
+      # 4. VERIFY TOOLCHAIN
+      # =========================================================
+      - name: Verify Java and Android tools
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "===== JAVA ====="
+          java --version
+
+          echo
+          echo "===== GRADLE / SDK TOOLS ====="
+
+          command -v sdkmanager
+          command -v adb
+
+          sdkmanager --version
+          adb --version
+
+          echo
+          echo "===== ANDROID SDK ROOT ====="
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+
+      # =========================================================
+      # 5. VERIFY ZIP
+      # =========================================================
+      - name: Verify Stitch ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Repository root:"
+          ls -lah
+
+          if [ ! -f "${ZIP_FILE}" ]; then
+            echo
+            echo "ERROR: ${ZIP_FILE} was not found."
+            echo
+            echo "Expected:"
+            echo "  ${ZIP_FILE}"
+            echo
+            echo "Files actually present:"
+            find . -maxdepth 3 -type f -print | sort
+            exit 1
+          fi
+
+          echo
+          echo "ZIP FOUND:"
+          ls -lh "${ZIP_FILE}"
+
+          echo
+          echo "ZIP CONTENT:"
+          unzip -l "${ZIP_FILE}"
+
+      # =========================================================
+      # 6. EXTRACT ZIP
+      # =========================================================
       - name: Extract Stitch project
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP_FILE="./stitch_kottaram_shadows_of_kerala.zip"
-
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: $ZIP_FILE was not found in repository root."
-            echo "Files in repository:"
-            find . -maxdepth 2 -type f | sort
-            exit 1
-          fi
-
-          echo "Found ZIP: $ZIP_FILE"
-
           rm -rf _stitch
           mkdir -p _stitch
 
-          unzip -q "$ZIP_FILE" -d _stitch
+          unzip -q "${ZIP_FILE}" -d _stitch
 
-          FIRST_HTML="$(find _stitch -type f -name 'code.html' | head -n 1)"
+          echo "Extracted directories:"
+          find _stitch -mindepth 1 -maxdepth 3 -type d | sort
 
-          if [ -z "$FIRST_HTML" ]; then
-            echo "ERROR: No code.html files were found inside the ZIP."
+          # Detect the folder containing the actual Stitch screen folders.
+          STITCH_ROOT="$(
+            find _stitch \
+              -type f \
+              -name 'code.html' \
+              -print \
+            | head -n 1 \
+            | xargs -r dirname \
+            | xargs -r dirname
+          )"
+
+          if [ -z "${STITCH_ROOT}" ]; then
+            echo "ERROR: No code.html was found inside ZIP."
             exit 1
           fi
 
-          STITCH_ROOT="$(dirname "$(dirname "$FIRST_HTML")")"
+          echo
+          echo "Detected Stitch root:"
+          echo "${STITCH_ROOT}"
 
-          echo "Stitch root: $STITCH_ROOT"
+          echo "STITCH_ROOT=${STITCH_ROOT}" >> "${GITHUB_ENV}"
 
-          echo "ZIP CONTENT:"
-          find "$STITCH_ROOT" -maxdepth 2 -type f | sort
+      # =========================================================
+      # 7. VERIFY YOUR ACTUAL SCREENS
+      # =========================================================
+      - name: Verify Stitch screens
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          echo "STITCH_ROOT=$STITCH_ROOT" >> "$GITHUB_ENV"
+          REQUIRED_FILES=(
+            "jeevalokam_kerala_living_world/code.html"
+            "kottaram_reality_distortion_tracker/code.html"
+            "thakidu_folklore_warding_talismans/code.html"
+            "rekhakal_archival_dossier_clues/code.html"
+            "1974_inspect_evid_a/code.html"
+            "1974_linked_to_deduction/code.html"
+            "inspect_evid_b/code.html"
+            "04_inspect_evid_c/code.html"
+            "04_linked_to_deduction/code.html"
+            "nilavilakku_ignited/code.html"
+            "bio_acoustics_suppressed/code.html"
+            "eyes_locked_front/code.html"
+            "talisman_re_anchored/code.html"
+            "machinpuram_attic_investigation/code.html"
+            "linked_to_deduction/code.html"
+            "tharavadu_exit_portal/code.html"
+            "kerala_gothic_psychological_horror/DESIGN.md"
+          )
 
-      # ---------------------------------------------------------
-      # 4. Create Android project dynamically
-      # ---------------------------------------------------------
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "${STITCH_ROOT}/${file}" ]; then
+              echo "ERROR: Missing:"
+              echo "  ${STITCH_ROOT}/${file}"
+              exit 1
+            fi
+          done
+
+          echo
+          echo "All required Stitch files found."
+
+      # =========================================================
+      # 8. CREATE ANDROID PROJECT
+      # =========================================================
       - name: Create Android project
         shell: bash
         run: |
@@ -80,21 +193,24 @@ jobs:
 
           rm -rf android-build
 
-          mkdir -p android-build
-          mkdir -p android-build/app/src/main/java/com/kottaram/shadows
-          mkdir -p android-build/app/src/main/res/values
-          mkdir -p android-build/app/src/main/assets/pages
+          mkdir -p \
+            android-build/app/src/main/assets \
+            android-build/app/src/main/java/com/kottaram/shadows \
+            android-build/app/src/main/res/values
 
-          # Copy EVERYTHING from the Stitch ZIP
-          cp -R "$STITCH_ROOT"/. android-build/app/src/main/assets/pages/
+          # Copy the COMPLETE Stitch project into Android assets.
+          cp -R "${STITCH_ROOT}/." \
+            android-build/app/src/main/assets/
 
-          echo "Copied Stitch files:"
-          find android-build/app/src/main/assets/pages -maxdepth 2 -type f | sort
+          echo
+          echo "Android assets created:"
+          find android-build/app/src/main/assets \
+            -maxdepth 3 -type f | sort
 
-      # ---------------------------------------------------------
-      # 5. settings.gradle.kts
-      # ---------------------------------------------------------
-      - name: Create Gradle settings
+      # =========================================================
+      # 9. settings.gradle.kts
+      # =========================================================
+      - name: Create settings.gradle.kts
         shell: bash
         run: |
           cat > android-build/settings.gradle.kts <<'EOF'
@@ -107,7 +223,10 @@ jobs:
           }
 
           dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositoriesMode.set(
+                  org.gradle.api.initialization.resolve.RepositoriesMode.FAIL_ON_PROJECT_REPOS
+              )
+
               repositories {
                   google()
                   mavenCentral()
@@ -115,13 +234,14 @@ jobs:
           }
 
           rootProject.name = "KottaramShadowsOfKerala"
+
           include(":app")
           EOF
 
-      # ---------------------------------------------------------
-      # 6. Root build.gradle.kts
-      # ---------------------------------------------------------
-      - name: Create root Gradle build
+      # =========================================================
+      # 10. ROOT build.gradle.kts
+      # =========================================================
+      - name: Create root build.gradle.kts
         shell: bash
         run: |
           cat > android-build/build.gradle.kts <<'EOF'
@@ -130,22 +250,22 @@ jobs:
           }
           EOF
 
-      # ---------------------------------------------------------
-      # 7. gradle.properties
-      # ---------------------------------------------------------
+      # =========================================================
+      # 11. gradle.properties
+      # =========================================================
       - name: Create gradle.properties
         shell: bash
         run: |
           cat > android-build/gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           android.nonTransitiveRClass=true
           EOF
 
-      # ---------------------------------------------------------
-      # 8. Android app build.gradle.kts
-      # ---------------------------------------------------------
-      - name: Create app Gradle file
+      # =========================================================
+      # 12. APP build.gradle.kts
+      # =========================================================
+      - name: Create app build.gradle.kts
         shell: bash
         run: |
           cat > android-build/app/build.gradle.kts <<'EOF'
@@ -159,11 +279,15 @@ jobs:
 
               defaultConfig {
                   applicationId = "com.kottaram.shadows"
+
                   minSdk = 24
                   targetSdk = 36
 
                   versionCode = 1
                   versionName = "1.0"
+
+                  testInstrumentationRunner =
+                      "androidx.test.runner.AndroidJUnitRunner"
               }
 
               compileOptions {
@@ -174,23 +298,26 @@ jobs:
               buildTypes {
                   debug {
                       isMinifyEnabled = false
+                      isDebuggable = true
                   }
 
                   release {
                       isMinifyEnabled = false
+                      isDebuggable = false
                   }
               }
           }
           EOF
 
-      # ---------------------------------------------------------
-      # 9. AndroidManifest.xml
-      # ---------------------------------------------------------
-      - name: Create Android manifest
+      # =========================================================
+      # 13. ANDROID MANIFEST
+      # =========================================================
+      - name: Create AndroidManifest.xml
         shell: bash
         run: |
           cat > android-build/app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
+
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
               <uses-permission android:name="android.permission.INTERNET" />
@@ -218,33 +345,36 @@ jobs:
           </manifest>
           EOF
 
-      # ---------------------------------------------------------
-      # 10. App theme
-      # ---------------------------------------------------------
-      - name: Create Android theme
+      # =========================================================
+      # 14. APP THEME
+      # =========================================================
+      - name: Create styles.xml
         shell: bash
         run: |
           cat > android-build/app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
+
           <resources>
 
-              <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
-                  <item name="android:windowActionModeOverlay">true</item>
+              <style
+                  name="AppTheme"
+                  parent="@android:style/Theme.Material.NoActionBar">
+
                   <item name="android:fontFamily">sans</item>
-                  <item name="android:colorAccent">#EEC14B</item>
                   <item name="android:windowLightStatusBar">false</item>
                   <item name="android:statusBarColor">#0F1418</item>
                   <item name="android:navigationBarColor">#0A0F13</item>
                   <item name="android:windowBackground">#0F1418</item>
+
               </style>
 
           </resources>
           EOF
 
-      # ---------------------------------------------------------
-      # 11. MainActivity.java
-      # ---------------------------------------------------------
-      - name: Create MainActivity
+      # =========================================================
+      # 15. MAIN ACTIVITY
+      # =========================================================
+      - name: Create MainActivity.java
         shell: bash
         run: |
           cat > android-build/app/src/main/java/com/kottaram/shadows/MainActivity.java <<'EOF'
@@ -255,7 +385,7 @@ jobs:
           import android.os.Bundle;
           import android.view.View;
           import android.webkit.WebChromeClient;
-          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
 
@@ -263,81 +393,57 @@ jobs:
 
               private WebView webView;
 
-              private static final String HOME_URL =
-                      "file:///android_asset/pages/jeevalokam_kerala_living_world/code.html";
-
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
 
                   webView = new WebView(this);
 
-                  webView.setBackgroundColor(Color.rgb(15, 20, 24));
-                  webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+                  webView.setBackgroundColor(
+                          Color.rgb(15, 20, 24)
+                  );
 
-                  webView.getSettings().setJavaScriptEnabled(true);
-                  webView.getSettings().setDomStorageEnabled(true);
-                  webView.getSettings().setDatabaseEnabled(true);
-                  webView.getSettings().setAllowFileAccess(true);
-                  webView.getSettings().setAllowContentAccess(true);
-                  webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+                  webView.setOverScrollMode(
+                          View.OVER_SCROLL_NEVER
+                  );
 
-                  webView.setWebChromeClient(new WebChromeClient());
+                  WebSettings settings = webView.getSettings();
 
-                  webView.setWebViewClient(new WebViewClient() {
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
 
-                      @Override
-                      public boolean shouldOverrideUrlLoading(
-                              WebView view,
-                              WebResourceRequest request) {
-                          return false;
-                      }
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
 
-                      @Override
-                      public void onPageFinished(WebView view, String url) {
-                          super.onPageFinished(view, url);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
 
-                          injectNavigation();
-                      }
-                  });
+                  webView.setWebChromeClient(
+                          new WebChromeClient()
+                  );
+
+                  webView.setWebViewClient(
+                          new WebViewClient()
+                  );
 
                   setContentView(webView);
 
-                  webView.loadUrl(HOME_URL);
-              }
-
-              private void injectNavigation() {
-
-                  String javascript =
-                          "javascript:(function() {" +
-                          "const routes = {" +
-                          "'jeevalokam':'jeevalokam_kerala_living_world'," +
-                          "'kottaram-tracker':'kottaram_reality_distortion_tracker'," +
-                          "'rekhakal':'rekhakal_archival_dossier_clues'," +
-                          "'thakidu':'thakidu_folklore_warding_talismans'" +
-                          "};" +
-
-                          "document.querySelectorAll('a[data-path]').forEach(function(a) {" +
-                          "if (a.dataset.kottaramBound === '1') return;" +
-                          "a.dataset.kottaramBound = '1';" +
-
-                          "a.addEventListener('click', function(e) {" +
-                          "const path = this.getAttribute('data-path');" +
-                          "if (routes[path]) {" +
-                          "e.preventDefault();" +
-                          "e.stopPropagation();" +
-                          "location.href = 'file:///android_asset/pages/' +" +
-                          "routes[path] + '/code.html';" +
-                          "}" +
-                          "}, true);" +
-                          "});" +
-                          "})();";
-
-                  webView.evaluateJavascript(javascript, null);
+                  /*
+                   * Your ZIP contains:
+                   *
+                   * jeevalokam_kerala_living_world/code.html
+                   *
+                   * This is used as the initial screen.
+                   */
+                  webView.loadUrl(
+                      "file:///android_asset/" +
+                      "jeevalokam_kerala_living_world/code.html"
+                  );
               }
 
               @Override
               public void onBackPressed() {
+
                   if (webView != null && webView.canGoBack()) {
                       webView.goBack();
                   } else {
@@ -347,68 +453,94 @@ jobs:
           }
           EOF
 
-      # ---------------------------------------------------------
-      # 12. Verify project
-      # ---------------------------------------------------------
-      - name: Verify generated Android project
+      # =========================================================
+      # 16. FINAL PROJECT CHECK
+      # =========================================================
+      - name: Validate generated Android project
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "ANDROID PROJECT:"
-          find android-build -maxdepth 6 -type f | sort
+          REQUIRED=(
+            "android-build/settings.gradle.kts"
+            "android-build/build.gradle.kts"
+            "android-build/gradle.properties"
+            "android-build/app/build.gradle.kts"
+            "android-build/app/src/main/AndroidManifest.xml"
+            "android-build/app/src/main/java/com/kottaram/shadows/MainActivity.java"
+            "android-build/app/src/main/res/values/styles.xml"
+            "android-build/app/src/main/assets/jeevalokam_kerala_living_world/code.html"
+          )
 
-          test -f android-build/settings.gradle.kts
-          test -f android-build/build.gradle.kts
-          test -f android-build/app/build.gradle.kts
-          test -f android-build/app/src/main/AndroidManifest.xml
-          test -f android-build/app/src/main/java/com/kottaram/shadows/MainActivity.java
-          test -f android-build/app/src/main/assets/pages/jeevalokam_kerala_living_world/code.html
+          for file in "${REQUIRED[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "ERROR: Missing generated file:"
+              echo "$file"
+              exit 1
+            fi
+          done
 
-          echo "Android project verification: OK"
+          echo "Generated Android project validation: PASS"
 
-      # ---------------------------------------------------------
-      # 13. Setup Android SDK
-      # ---------------------------------------------------------
-      - name: Set up Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          yes | sdkmanager --licenses >/dev/null || true
-
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0"
-
-      # ---------------------------------------------------------
-      # 14. Install exact Gradle version
-      # ---------------------------------------------------------
-      - name: Set up Gradle 9.3.1
+      # =========================================================
+      # 17. SETUP GRADLE 9.3.1
+      # =========================================================
+      - name: Setup Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: '9.3.1'
+          gradle-version: "9.3.1"
 
-      # ---------------------------------------------------------
-      # 15. Build APK
-      # ---------------------------------------------------------
+      # =========================================================
+      # 18. VERIFY GRADLE
+      # =========================================================
+      - name: Verify Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --version
+
+      # =========================================================
+      # 19. BUILD DEBUG APK
+      # =========================================================
       - name: Build Debug APK
         working-directory: android-build
         shell: bash
         run: |
           set -euo pipefail
 
-          gradle --version
+          gradle \
+            assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --console=plain
 
-          gradle assembleDebug --stacktrace --no-daemon
+      # =========================================================
+      # 20. CHECK APK
+      # =========================================================
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      # ---------------------------------------------------------
-      # 16. Upload APK
-      # ---------------------------------------------------------
+          APK_DIR="android-build/app/build/outputs/apk/debug"
+
+          if ! compgen -G "${APK_DIR}/*.apk" > /dev/null; then
+            echo "ERROR: APK was not generated."
+            find android-build/app/build -type f | sort
+            exit 1
+          fi
+
+          echo
+          echo "APK GENERATED:"
+          ls -lh "${APK_DIR}"/*.apk
+
+      # =========================================================
+      # 21. UPLOAD APK
+      # =========================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: kottaram-debug-apk
           path: android-build/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          retention-days: 7
